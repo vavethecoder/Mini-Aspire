@@ -2,16 +2,36 @@
 
 namespace App\Http\Controllers;
 
-use App\Services\UserService;
+use App\Services\Interfaces\UserServiceInterface;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
 class AuthController extends Controller
 {
+    private $userService;
 
-    public function __construct()
+    public function __construct(UserServiceInterface $userService)
     {
+        parent::__construct();
         $this->middleware('auth:api', ['except' => ['login', 'register']]);
+
+        $this->userService = $userService;
+    }
+
+    public function register(Request $request)
+    {
+        $request->validate([
+            'name' => 'required|string|max:255',
+            'email' => 'required|string|email|max:255|unique:users',
+            'password' => 'required|string|min:6',
+        ]);
+
+        $this->userService->createUser($request);
+
+        return response()->json([
+            'status' => config('enums.api_status')['SUCCESS'],
+            'message' => config('messages.success')['REGISTERED'],
+        ], Response::HTTP_CREATED);
     }
 
     public function login(Request $request)
@@ -20,12 +40,8 @@ class AuthController extends Controller
             'email' => 'required|string|email',
             'password' => 'required|string',
         ]);
-        $credentials = $request->only('email', 'password');
 
-        $token = auth('api')
-            ->setTTL(120)
-            ->attempt($credentials);
-
+        $token = $this->userService->getFreshToken($request);
         if (!$token) {
             return response()->json([
                 'status' => config('enums.api_status')['ERROR'],
@@ -43,39 +59,26 @@ class AuthController extends Controller
 
     }
 
-    public function register(Request $request, UserService $userService)
+    public function refresh(Request $request)
     {
-        $request->validate([
-            'name' => 'required|string|max:255',
-            'email' => 'required|string|email|max:255|unique:users',
-            'password' => 'required|string|min:6',
-        ]);
+        $token = $this->userService->getRefreshToken($request);
 
-        $userService->createUser($request);
-
-        return response()->json([
-            'status' => config('enums.api_status')['SUCCESS'],
-            'message' => config('messages.success')['REGISTERED'],
-        ], Response::HTTP_CREATED);
-    }
-
-    public function logout()
-    {
-        auth('api')->logout();
-        return response()->json([
-            'status' => config('enums.api_status')['SUCCESS'],
-            'message' => config('messages.success')['LOG_OUT'],
-        ], Response::HTTP_OK);
-    }
-
-    public function refresh()
-    {
         return response()->json([
             'status' => config('enums.api_status')['SUCCESS'],
             'authorisation' => [
-                'token' => auth('api')->refresh(),
+                'token' => $token,
                 'type' => config('enums.token_type')['BEARER'],
             ]
+        ], Response::HTTP_OK);
+    }
+
+    public function logout(Request $request)
+    {
+        $this->userService->userLogout($request);
+
+        return response()->json([
+            'status' => config('enums.api_status')['SUCCESS'],
+            'message' => config('messages.success')['LOG_OUT'],
         ], Response::HTTP_OK);
     }
 

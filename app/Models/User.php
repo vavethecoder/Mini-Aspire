@@ -2,7 +2,6 @@
 
 namespace App\Models;
 
-use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
@@ -43,7 +42,7 @@ class User extends Authenticatable implements JWTSubject
         'email_verified_at' => 'datetime',
     ];
 
-     /**
+    /**
      * Get the identifier that will be stored in the subject claim of the JWT.
      *
      * @return mixed
@@ -70,7 +69,7 @@ class User extends Authenticatable implements JWTSubject
      */
     public function isAdmin()
     {
-        if($this->role === config('enums.roles')['ADMIN']) {
+        if ($this->role === config('enums.roles')['ADMIN']) {
             return true;
         } else {
             return false;
@@ -84,7 +83,7 @@ class User extends Authenticatable implements JWTSubject
      */
     public function isUser()
     {
-        if($this->role === config('enums.roles')['USER']) {
+        if ($this->role === config('enums.roles')['USER']) {
             return true;
         } else {
             return false;

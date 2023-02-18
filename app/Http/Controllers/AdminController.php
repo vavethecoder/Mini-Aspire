@@ -3,63 +3,62 @@
 namespace App\Http\Controllers;
 
 use App\Http\Middleware\HasAdminPermission;
-use App\Services\LoanService;
+use App\Services\Interfaces\LoanServiceInterface;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
 class AdminController extends Controller
 {
+    protected $loanService;
 
-    public function __construct()
+    public function __construct(LoanServiceInterface $loanService)
     {
+        parent::__construct();
         $this->middleware('auth:api');
         $this->middleware(HasAdminPermission::class);
+
+        $this->loanService = $loanService;
+
     }
 
-    public function getAllLoans(Request $request, LoanService $loanService)
+    public function getAllLoans(Request $request)
     {
-        $loans = $loanService->getLoans();
-
-        $repayments = $loanService->getRepaymentsForAllLoans($loans);
-
-        $loanDetails = $loanService->getLoanDetails($loans, $repayments);
+        $allLoans = $this->loanService->getAllLoansWithDetails($request);
 
         return response()->json([
             'status' => config('enums.api_status')['SUCCESS'],
-            'loans' => $loanDetails,
-        ],Response::HTTP_OK);
+            'loans' => $allLoans,
+        ], Response::HTTP_OK);
     }
 
-    public function approveLoan(Request $request, LoanService $loanService)
+    public function approveLoan(Request $request)
     {
         $request->validate([
             'loan_number' => 'required|numeric|gt:0',
         ]);
 
-        $loan = $loanService->getLoan($request);
-        $approvedStatus = config('enums.loan_status')['APPROVED'];
+        $loan = $this->loanService->getLoan($request);
 
-        if($loan === null) {
+        if (empty($loan)) {
             return response()->json([
                 'status' => config('enums.api_status')['ERROR'],
                 'message' => config('messages.error')['LOAN_NOT_EXIST'],
             ], Response::HTTP_BAD_REQUEST);
         }
 
-        if($loan->status === $approvedStatus) {
+        if ($loan['status'] === config('enums.loan_status')['APPROVED']) {
             return response()->json([
                 'status' => config('enums.api_status')['ERROR'],
                 'message' => config('messages.error')['LOAN_APPROVED'],
             ], Response::HTTP_BAD_REQUEST);
         }
 
-        $loanService->updateLoanStatus($request, config('enums.loan_status')['APPROVED']);
-
-        $loanService->createRepayments($request);
+        $this->loanService->updateLoanStatus($request, config('enums.loan_status')['APPROVED']);
+        $this->loanService->createRepayments($request, $loan);
 
         return response()->json([
             'status' => config('enums.api_status')['SUCCESS'],
-            'message' => sprintf(config('messages.success')['LOAN_APPROVED'], $loan->id),
-        ],Response::HTTP_OK);
+            'message' => sprintf(config('messages.success')['LOAN_APPROVED'], $loan['id']),
+        ], Response::HTTP_OK);
     }
 }

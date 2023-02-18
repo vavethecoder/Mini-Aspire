@@ -12,8 +12,10 @@ return [
         'UNAUTHORIZED' => 'Unauthorized.',
         'LOAN_NOT_EXIST' => 'Loan number not exist.',
         'LOAN_APPROVED' => 'Already approved loan.',
+        'LOAN_NOT_APPROVED' => 'Loan not yet approved.',
+        'LOAN_NOT_ACTIVE' => 'Loan is not active.',
         'LOAN_CLOSED' => 'Already closed loan.',
-        'LOAN_OVER_PAYMENT' => 'Payment should not more than %s amount.',
+        'LOAN_OVER_PAYMENT' => 'Payment should not more than balance amount.',
         'LOAN_USER_INVALID' => 'Loan not belongs to user.',
     ]
 ];

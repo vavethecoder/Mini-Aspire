@@ -3,145 +3,187 @@
 namespace App\Services;
 
 use App\Models\Loan;
-use App\Models\Repayment;
+use App\Repositories\Interfaces\LoanRepositoryInterface;
+use App\Repositories\Interfaces\RepaymentRepositoryInterface;
+use App\Services\Interfaces\LoanServiceInterface;
 use Illuminate\Http\Request;
-use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Facades\Log;
 
-class LoanService
+class LoanService implements LoanServiceInterface
 {
-    public function getLoans($userId = null): Collection|null
+    private LoanRepositoryInterface $loanRepository;
+
+    private RepaymentRepositoryInterface $repaymentRepository;
+
+    public function __construct(LoanRepositoryInterface $loanRepository, RepaymentRepositoryInterface $repaymentRepository)
     {
-        $loans = Loan::all();
-        if ($userId !== null) {
-            $loans = $loans->where('user', '=', $userId);
+        $this->loanRepository = $loanRepository;
+        $this->repaymentRepository = $repaymentRepository;
+    }
+
+    public function getAllLoansWithDetails(Request $request): array
+    {
+        $userId = null;
+        $user = auth('api')->user();
+        if (!is_null($user) && $user->isUser()) {
+            $userId = $user->id;
         }
 
-        return $loans;
-    }
+        $loans = $this->loanRepository->findByUserId($userId);
 
-    public function getRepayments($loanId): Collection|null
-    {
-        return Repayment::all()
-            ->where('loan', '=', $loanId)
-            ->sortBy('due_date');
-    }
-
-    public function getPaidRepayments(): int
-    {
-        return Repayment::all()->where('status', '=', config('enums.repayment_status')['PAID'])->count();
-    }
-
-    public function getRepaymentsForAllLoans(Collection $loans): Collection|null
-    {
-        $loanIds = [];
-        foreach ($loans as $loan) {
-            $loanIds[] = $loan->id;
-        }
-
-        return Repayment::all()->whereIn('loan', $loanIds);
-    }
-
-    public function getLoan(Request $request): Loan|null
-    {
-        return Loan::whereId($request->loan_number)->first();
-    }
-
-    public function getLoanDetails($loans, $repayments): array
-    {
         $loanDetails = [];
-        $repaymentDeatils = [];
-
-        foreach ($repayments as $i => $repayment) {
-            $repaymentDeatils[$repayment->loan][$i]['emi'] = $repayment->emi;
-            $repaymentDeatils[$repayment->loan][$i]['due_date'] = $repayment->due_date;
-            $repaymentDeatils[$repayment->loan][$i]['status'] = $repayment->status;
-        }
-
         foreach ($loans as $i => $loan) {
-            $loanDetails[$i]['loan_number'] = $loan->id;
-            $loanDetails[$i]['amount'] = $loan->amount;
-            $loanDetails[$i]['term'] = $loan->term;
-            $loanDetails[$i]['balance'] = $loan->balance;
-            $loanDetails[$i]['status'] = $loan->status;
-            if (isset($repaymentDeatils[$loan->id])) {
-                $loanDetails[$i]['repayment'] = $repaymentDeatils[$loan->id];
+            $loanDetails[$loan->id]['loan_number'] = $loan->id;
+            $loanDetails[$loan->id]['amount'] = $loan->amount;
+            $loanDetails[$loan->id]['term'] = $loan->term;
+            $loanDetails[$loan->id]['balance'] = $loan->balance;
+            $loanDetails[$loan->id]['status'] = $loan->loan_status;
+            if ($loan->emi !== null) {
+                $loanDetails[$loan->id]['repayments'][$i]['emi'] = $loan->emi;
+                $loanDetails[$loan->id]['repayments'][$i]['due_date'] = $loan->due_date;
+                $loanDetails[$loan->id]['repayments'][$i]['status'] = $loan->repayment_status;
             }
         }
+
+        Log::channel('request')->info('Get all loan details of user for Correlation ID : ' . $request->header('X-Correlation-ID'));
+
         return $loanDetails;
     }
 
     public function createLoan(Request $request): Loan
     {
-        return Loan::create([
-            'user' => (auth('api')->user())->id,
-            'amount' => $request->amount,
-            'term' => $request->term,
-            'balance' => $request->amount,
-            'status' => config('enums.loan_status')['PENDING'],
-        ]);
+        $loan = $this->loanRepository->create($request->all());
+
+        Log::channel('request')->info('Loan applied for Correlation ID : ' . $request->header('X-Correlation-ID'));
+
+        return $loan;
     }
 
-    public function createRepayments(Request $request): void
+    public function updateRepaymentForLoan(Request $request): array
     {
-        $loan = $this->getLoan($request);
-        $emi = number_format((float)($loan->amount / $loan->term), 2, '.', '');
-        $dueDate = (new \DateTime('now'))->setTime(23, 59, 59);
+        $repayments = [];
 
-        for ($i = 0; $i < $loan->term; $i++) {
+        $loan = $this->getLoan($request);
+        Log::channel('request')->info('Get loan details for Correlation ID : ' . $request->header('X-Correlation-ID'));
+
+        if (!empty($loan) && $loan['status'] != config('enums.loan_status')['APPROVED']) {
+            $repayments['error']['message'] = config('messages.error')['LOAN_NOT_ACTIVE'];
+            return $repayments;
+        }
+
+        if (!empty($loan) && $loan['balance'] < $request->payment) {
+            $repayments['error']['message'] = config('messages.error')['LOAN_OVER_PAYMENT'];
+            return $repayments;
+        }
+
+        Log::channel('request')->info('Loan repayment updated for Correlation ID : ' . $request->header('X-Correlation-ID'));
+        return $this->updateLoanRepayment($request, $loan);
+    }
+
+    public function getLoan(Request $request): array
+    {
+        $userId = null;
+        $user = auth('api')->user();
+        if (!is_null($user) && $user->isUser()) {
+            $userId = $user->id;
+        }
+
+        $loans = $this->loanRepository->findByIdAndUserId($request->loan_number, $userId);
+
+        $loanDetails = [];
+        foreach ($loans as $i => $loan) {
+            $loanDetails[$loan->id]['id'] = $loan->id;
+            $loanDetails[$loan->id]['amount'] = $loan->amount;
+            $loanDetails[$loan->id]['term'] = $loan->term;
+            $loanDetails[$loan->id]['balance'] = $loan->balance;
+            $loanDetails[$loan->id]['status'] = $loan->loan_status;
+            if ($loan->emi !== null) {
+                $loanDetails[$loan->id]['repayments'][$i]['id'] = $loan->repayment_id;
+                $loanDetails[$loan->id]['repayments'][$i]['emi'] = $loan->emi;
+                $loanDetails[$loan->id]['repayments'][$i]['due_date'] = $loan->due_date;
+                $loanDetails[$loan->id]['repayments'][$i]['status'] = $loan->repayment_status;
+            }
+        }
+
+        Log::channel('request')->info('Get loan details of user for Correlation ID : ' . $request->header('X-Correlation-ID'));
+
+        return array_pop($loanDetails);
+    }
+
+    public function createRepayments(Request $request, $loan): void
+    {
+        $emi = number_format((float)($loan['amount'] / $loan['term']), 2, '.', '');
+        $dueDate = (new \DateTime('now'))->setTime(23, 59, 59);
+        $last_emi = $loan['amount'] - ($emi * ($loan['term'] - 1));
+
+        for ($i = 0; $i < $loan['term']; $i++) {
+            if ($loan['term'] - $i === 1) {
+                $emi = $last_emi;
+            }
             $dueDate = $dueDate->add(new \DateInterval('P7D'));
-            Repayment::create([
-                'loan' => $request->loan_number,
+            $data = [
+                'loan' => $request['loan_number'],
                 'emi' => $emi,
                 'due_date' => $dueDate,
                 'status' => config('enums.repayment_status')['DUE'],
-            ]);
+            ];
+            $this->repaymentRepository->create($data);
         }
+
+        Log::channel('request')->info('Loan repayments created for Correlation ID : ' . $request->header('X-Correlation-ID'));
     }
 
     public function updateLoanStatus(Request $request, $status): void
     {
-        Loan::where('id', $request->loan_number)->update([
+        $this->loanRepository->updateById($request->loan_number, [
             'status' => $status
         ]);
+
+        Log::channel('request')->info('Loan status updated for Correlation ID : ' . $request->header('X-Correlation-ID'));
     }
 
-    public function updateLoanRepayment(Request $request, Loan $loan, Collection $repayments): void
+    public function updateLoanRepayment(Request $request, array $loan): array
     {
-        $paid = $loan->balance;
+        $paid = $loan['amount'] - $loan['balance'];
         $payment = $request->payment;
-        foreach ($repayments as $repayment) {
-            if ($repayment->status === config('enums.repayment_status')['PAID']) {
-                $paid -= $repayment->emi;
+        foreach ($loan['repayments'] as &$repayment) {
+            if ($repayment['status'] === config('enums.repayment_status')['PAID']) {
+                $paid -= $repayment['emi'];
                 continue;
             }
 
-            if ($repayment->status === config('enums.repayment_status')['PART']) {
+            if ($repayment['status'] === config('enums.repayment_status')['PART']) {
                 $payment += $paid;
             }
 
             switch (true) {
-                case $payment >= $repayment->emi :
-                    $payment = number_format((float)($payment - $repayment->emi), 2, '.', '');
-                    Repayment::where('id', '=', $repayment->id)->update([
-                        'status' => config('enums.repayment_status')['PAID']
-                    ]);
+                case $payment >= $repayment['emi'] :
+                    $repayment['status'] = config('enums.repayment_status')['PAID'];
+                    $payment = number_format((float)($payment - $repayment['emi']), 2, '.', '');
+                    $data = ['status' => config('enums.repayment_status')['PAID']];
+                    $this->repaymentRepository->updateById($repayment['id'], $data);
                     break;
-                case $payment > 0 && $payment < $repayment->emi :
-                    $payment = number_format((float)($payment - $repayment->emi), 2, '.', '');
-                    Repayment::where('id', '=', $repayment->id)->update([
-                        'status' => config('enums.repayment_status')['PART']
-                    ]);
+                case $payment > 0 && $payment < $repayment['emi'] :
+                    $repayment['status'] = config('enums.repayment_status')['PART'];
+                    $payment = number_format((float)($payment - $repayment['emi']), 2, '.', '');
+                    $data = ['status' => config('enums.repayment_status')['PART']];
+                    $this->repaymentRepository->updateById($repayment['id'], $data);
                     break;
             }
         }
 
-        $balance = number_format((float)($loan->balance - $request->payment), 2, '.', '');
-        if($loan->term === $this->getPaidRepayments()) {
-            Loan::where('id', $request->loan_number)->update(['balance' => $balance, 'status' => config('enums.loan_status')['CLOSED']]);
+        $balance = number_format((float)($loan['balance'] - $request->payment), 2, '.', '');
+
+        $loan['balance'] = $balance;
+        $data = ['balance' => $balance];
+        if (intval($balance) === 0) {
+            $loan['status'] = $data['status'] = config('enums.loan_status')['CLOSED'];
+            $this->loanRepository->updateById($loan['id'], $data);
         } else {
-            Loan::where('id', $request->loan_number)->update(['balance' => $balance]);
+            $this->loanRepository->updateById($loan['id'], $data);
         }
 
+        return $loan;
     }
 
 }

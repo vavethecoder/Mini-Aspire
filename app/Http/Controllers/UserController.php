@@ -3,28 +3,41 @@
 namespace App\Http\Controllers;
 
 use App\Http\Middleware\HasUserPermission;
-use App\Models\Loan;
-use App\Services\LoanService;
+use App\Services\Interfaces\LoanServiceInterface;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
 class UserController extends Controller
 {
+    private $loanService;
 
-    public function __construct()
+    public function __construct(LoanServiceInterface $loanService)
     {
+        parent::__construct();
         $this->middleware('auth:api');
         $this->middleware(HasUserPermission::class);
+
+        $this->loanService = $loanService;
     }
 
-    public function applyLoan(Request $request, LoanService $loanService)
+    public function getAllLoans(Request $request)
+    {
+        $allLoans = $this->loanService->getAllLoansWithDetails($request);
+
+        return response()->json([
+            'status' => config('enums.api_status')['SUCCESS'],
+            'loans' => $allLoans,
+        ], Response::HTTP_OK);
+    }
+
+    public function applyLoan(Request $request)
     {
         $request->validate([
             'amount' => 'required|numeric|gt:0',
             'term' => 'required|integer|gt:0',
         ]);
 
-        $loan = $loanService->createLoan($request);
+        $loan = $this->loanService->createLoan($request);
 
         return response()->json([
             'status' => config('enums.api_status')['SUCCESS'],
@@ -32,58 +45,25 @@ class UserController extends Controller
         ], Response::HTTP_CREATED);
     }
 
-    public function getAllLoans(Request $request, LoanService $loanService)
-    {
-        $userId = (auth('api')->user())->id;
-
-        $loans = $loanService->getLoans($userId);
-
-        $repayments = $loanService->getRepaymentsForAllLoans($loans);
-
-        $loanDetails = $loanService->getLoanDetails($loans, $repayments);
-
-        return response()->json([
-            'status' => config('enums.api_status')['SUCCESS'],
-            'loans' => $loanDetails,
-        ], Response::HTTP_OK);
-    }
-
-    public function repaymentLoan(Request $request, LoanService $loanService)
+    public function repaymentLoan(Request $request)
     {
         $request->validate([
             'loan_number' => 'required|numeric|gt:0',
             'payment' => 'required|numeric|gt:0',
         ]);
 
-        $loan = $loanService->getLoan($request);
-        if($loan !== null && (auth('api')->user())->id !== $loan->user) {
+        $loan = $this->loanService->updateRepaymentForLoan($request);
+
+        if (isset($loan['error'])) {
             return response()->json([
                 'status' => config('enums.api_status')['ERROR'],
-                'message' => config('messages.error')['LOAN_USER_INVALID'],
+                'message' => $loan['error']['message'],
             ], Response::HTTP_BAD_REQUEST);
         }
-
-        if($loan !== null && $loan->status === config('enums.loan_status')['CLOSED']) {
-            return response()->json([
-                'status' => config('enums.api_status')['ERROR'],
-                'message' => config('messages.error')['LOAN_CLOSED'],
-            ], Response::HTTP_BAD_REQUEST);
-        }
-
-        if($loan !== null && $loan->balance < $request->payment) {
-            return response()->json([
-                'status' => config('enums.api_status')['ERROR'],
-                'message' => sprintf(config('messages.error')['LOAN_OVER_PAYMENT'], $loan->balance),
-            ], Response::HTTP_BAD_REQUEST);
-        }
-
-        $repayments = $loanService->getRepayments($request->loan_number);
-
-        $loanService->updateLoanRepayment($request, $loan, $repayments);
 
         return response()->json([
             'status' => config('enums.api_status')['SUCCESS'],
-            'message' => config('messages.success')['REPAYMENT_SUCCESS'],
+            'loans' => $loan,
         ], Response::HTTP_OK);
 
     }
