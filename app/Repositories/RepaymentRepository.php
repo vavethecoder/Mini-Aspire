@@ -4,7 +4,6 @@ namespace App\Repositories;
 
 use App\Models\Repayment;
 use App\Repositories\Interfaces\RepaymentRepositoryInterface;
-use Illuminate\Support\Facades\Hash;
 
 class RepaymentRepository implements RepaymentRepositoryInterface
 {
