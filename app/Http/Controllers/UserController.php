@@ -9,7 +9,7 @@ use Symfony\Component\HttpFoundation\Response;
 
 class UserController extends Controller
 {
-    private $loanService;
+    private LoanServiceInterface $loanService;
 
     public function __construct(LoanServiceInterface $loanService)
     {

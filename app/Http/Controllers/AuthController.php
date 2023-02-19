@@ -8,7 +8,7 @@ use Symfony\Component\HttpFoundation\Response;
 
 class AuthController extends Controller
 {
-    private $userService;
+    private UserServiceInterface $userService;
 
     public function __construct(UserServiceInterface $userService)
     {

@@ -9,7 +9,7 @@ use Symfony\Component\HttpFoundation\Response;
 
 class AdminController extends Controller
 {
-    protected $loanService;
+    protected LoanServiceInterface $loanService;
 
     public function __construct(LoanServiceInterface $loanService)
     {
